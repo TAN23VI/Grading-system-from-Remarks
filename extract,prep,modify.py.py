@@ -64,4 +64,3 @@ predicted_grade = output.item()
 print(f"PS No: {ps_no}, Name: {name}, Remarks: {remarks}, Predicted Grade: {predicted_grade:.2f}")
 ```
 
-Please replace `'path_to_your_excel_file.xlxs'` with the actual path to your Excel file and `'path_to_your_mlp_weights.pth'` with the path to the pre-trained MLP weights if you have them. This code assumes that you have a pre-trained MLP model to convert the text embeddings into a grade from 0-10. If you don't have the model weights, you will need to train the MLP model on a dataset that has text data and corresponding grades.
