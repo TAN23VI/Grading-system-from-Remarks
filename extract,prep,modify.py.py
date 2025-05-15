@@ -1,66 +1,70 @@
-
-
-# Import the necessary packages
 import pandas as pd
-import transformers
-from transformers import pipeline
-import scikit-learn
-from scikit-learn.model_selection import train_test_split
-from scikit-learn.metrics import mean_squared_error
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import MinMaxScaler
+from transformers import AutoTokenizer, AutoModel
 import torch
 
-# Load the Excel sheet
-df = pd.read_excel("C:\Users\lmb.bot3\Desktop\Tanvi\Project\Manager_EndShiftRemark_List_13-05-2025 09_59_18.xlsx", sheet_name='Sheet1', usecols=[ 13, 14])  #  PS No and Name are in column 13, Remarks are in column 14
+# Load Excel
+file_path = r"C:\Users\lmb.bot3\Desktop\Tanvi\Project\Manager_EndShiftRemark_List_13-05-2025 09_59_18.xlsx"
+df = pd.read_excel(file_path)
 
-# Extract PS No and Name from the first row
-ps_no = df.loc[0, 13]
-name = df.loc[0, 13]
+# Identify the right columns
+info_column = df.columns[0]
+remarks_column = df.columns[1]
 
-# Extract Remarks from the same row as PS No and Name
-remarks = df.loc[0, 14]
+# Extract Info and Remarks
+df = df[[info_column, remarks_column]]
+df.columns = ['Info', 'Remarks']
+df = df.dropna(subset=['Remarks'])
 
-# Initialize the DistilBERT pipeline for text to vector conversion
-embedder = pipeline("text-embedding", model="distilbert-base-uncased")
+# Dummy grades for training (replace with actual grades if available)
+np.random.seed(42)
+df['Grade'] = np.random.randint(0, 11, size=len(df))
 
-# Convert the Remarks text into a dense vector
-remarks_vector = embedder(remarks)
+# Load MiniLM model for embeddings
+tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# Assuming you have an MLP model ready, use it to grade the remark
-# Define a simple MLP model if you don't have one
-class MLP(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(MLP, self).__init__()
-        self.fc1 = torch.nn.Linear(input_size, hidden_size)
-        self.relu = torch.nn.ReLU()
-        self.fc2 = torch.nn.Linear(hidden_size, output_size)
+# Convert remarks to dense vectors
+def get_embedding(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
+    with torch.no_grad():
+        outputs = model(**inputs)
+        embeddings = outputs.last_hidden_state.mean(dim=1)
+    return embeddings.squeeze().numpy()
 
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.fc2(x)
-        return x
+print("Generating embeddings...")
+df['Embedding'] = df['Remarks'].apply(get_embedding)
 
-# Initialize the MLP model
-model = MLP(768, 64, 1)  # Assuming the hidden layer size is 64 and output layer size is 1 for a regression to 0-10 scale
-model.to('cuda') if torch.cuda.is_available() else model.to('cpu')
+# Prepare training data
+X = np.stack(df['Embedding'].values)
+y = df['Grade'].values
+scaler = MinMaxScaler()
+X_scaled = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
-# Load the model weights if you have pre-trained it on a dataset
-# model.load_state_dict(torch.load('path_to_your_mlp_weights.pth'))
+# Train MLP model
+print("Training model...")
+mlp = MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42)
+mlp.fit(X_train, y_train)
 
-# Define loss function and optimizer
-loss_function = torch.nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+# Predict grades and round to integers
+print("Predicting grades...")
+X_all_scaled = scaler.transform(X)
+df['Predicted_Grade'] = np.rint(mlp.predict(X_all_scaled)).astype(int)
 
-# Placeholder for the input vector
-input_tensor = torch.tensor(remarks_vector, dtype=torch.float)
+# Reload original Excel to preserve all formatting and columns
+df_output = pd.read_excel(file_path)
 
-# Forward pass
-output = model(input_tensor)
+# Insert Predicted_Grade column after the Remarks column
+remarks_col_idx = df_output.columns.get_loc(remarks_column)
+df_output.insert(remarks_col_idx + 1, "Predicted_Grade", df['Predicted_Grade'])
 
-# Get the predicted grade
-predicted_grade = output.item()
+# Save the modified DataFrame to a new Excel file
+output_path = file_path.replace(".xlsx", "_with_grades.xlsx")
+df_output.to_excel(output_path, index=False)
 
-# Print the PS No, Name, Remarks, and Predicted Grade
-print(f"PS No: {ps_no}, Name: {name}, Remarks: {remarks}, Predicted Grade: {predicted_grade:.2f}")
-```
+print(f" Graded file saved with Predicted_Grade beside Remarks at:\n{output_path}")
 
