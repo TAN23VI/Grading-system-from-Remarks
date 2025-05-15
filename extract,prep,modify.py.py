@@ -1,13 +1,13 @@
-#could add visual embeddings for better classification
-#fine tuning the transformer
+#visual embeddings and fine tuning of the transformer is yet to be done
+#right now, code reads excel, extracts PS No PS Name and remarks, applies MiniLM, then MLP not linear regression, adds the grade column, presents modified excel
+
 
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
-from transformers import AutoTokenizer, AutoModel
-import torch
+from sentence_transformers import SentenceTransformer
 
 # Load Excel
 file_path = r"C:\Users\lmb.bot3\Desktop\Tanvi\Project\Manager_EndShiftRemark_List_13-05-2025 09_59_18.xlsx"
@@ -26,17 +26,12 @@ df = df.dropna(subset=['Remarks'])
 np.random.seed(42)
 df['Grade'] = np.random.randint(0, 11, size=len(df))
 
-# Load MiniLM model for embeddings
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+# Load SentenceTransformer model
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Convert remarks to dense vectors
 def get_embedding(text):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-        embeddings = outputs.last_hidden_state.mean(dim=1)
-    return embeddings.squeeze().numpy()
+    return model.encode(text)
 
 print("Generating embeddings...")
 df['Embedding'] = df['Remarks'].apply(get_embedding)
@@ -69,5 +64,5 @@ df_output.insert(remarks_col_idx + 1, "Predicted_Grade", df['Predicted_Grade'])
 output_path = file_path.replace(".xlsx", "_with_grades.xlsx")
 df_output.to_excel(output_path, index=False)
 
-print(f" Graded file saved with Predicted_Grade beside Remarks at:\n{output_path}")
+print(f"Graded file saved with Predicted_Grade beside Remarks at:\n{output_path}")
 
