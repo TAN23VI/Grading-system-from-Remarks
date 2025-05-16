@@ -1,68 +1,82 @@
 #visual embeddings and fine tuning of the transformer is yet to be done
 #right now, code reads excel, extracts PS No PS Name and remarks, applies MiniLM, then MLP not linear regression, adds the grade column, presents modified excel
 
-
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import MinMaxScaler
 from sentence_transformers import SentenceTransformer
 
-# Load Excel
-file_path = r"C:\Users\lmb.bot3\Desktop\Tanvi\Project\Manager_EndShiftRemark_List_13-05-2025 09_59_18.xlsx"
-df = pd.read_excel(file_path)
+def find_remark_column(df):
+    keywords = ["remark", "comment", "note", "feedback"]
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(k in col_lower for k in keywords):
+            return col
+    return None
 
-# Identify the right columns
-info_column = df.columns[0]
-remarks_column = df.columns[1]
+# === CONFIG ===
+main_file = "Manager_EndShiftRemark_List_13-05-2025 09_59_18.xlsx"
+other_files = [
+    "complex_worker_remarks.xlsx",
+    "Manager_EndShiftRemark_List_Demo.xlsx",
+    # Add other files here
+]
 
-# Extract Info and Remarks
-df = df[[info_column, remarks_column]]
-df.columns = ['Info', 'Remarks']
-df = df.dropna(subset=['Remarks'])
+# Load model and scaler (offline mode)
+model_path = r"C:\Users\lmb.bot3\Desktop\Tanvi\Project\model\all-MiniLM-L6-v2"
+model = SentenceTransformer(model_path)
+scaler = MinMaxScaler()
+mlp = MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42)
 
-# Dummy grades for training (replace with actual grades if available)
-np.random.seed(42)
-df['Grade'] = np.random.randint(0, 11, size=len(df))
-
-# Load SentenceTransformer model
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Convert remarks to dense vectors
-def get_embedding(text):
-    return model.encode(text)
-
-print("Generating embeddings...")
-df['Embedding'] = df['Remarks'].apply(get_embedding)
+# === Step 1: Load main file and find remark column ===
+train_df = pd.read_excel(main_file)
+main_remark_col = find_remark_column(train_df)
+if main_remark_col is None:
+    raise ValueError(f"No remark-like column found in {main_file}")
+print(f"Detected remark column in main file: '{main_remark_col}'")
 
 # Prepare training data
-X = np.stack(df['Embedding'].values)
-y = df['Grade'].values
-scaler = MinMaxScaler()
-X_scaled = scaler.fit_transform(X)
-X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+if train_df["Grade"].isna().sum() == 0:
+    # All grades present, train on all
+    print(f"All grades present in {main_file}, training model on full data.")
+    X_train = np.stack(train_df[main_remark_col].apply(model.encode))
+    y_train = train_df["Grade"].astype(float).values
+    mlp.fit(scaler.fit_transform(X_train), y_train)
+else:
+    train_labeled = train_df.dropna(subset=[main_remark_col, "Grade"])
+    X_train = np.stack(train_labeled[main_remark_col].apply(model.encode))
+    y_train = train_labeled["Grade"].astype(float).values
+    mlp.fit(scaler.fit_transform(X_train), y_train)
+    
+    # Predict missing grades in main file
+    to_predict = train_df[train_df["Grade"].isna()]
+    if not to_predict.empty:
+        X_missing = np.stack(to_predict[main_remark_col].apply(model.encode))
+        X_missing_scaled = scaler.transform(X_missing)
+        preds = np.rint(mlp.predict(X_missing_scaled)).astype(int)
+        train_df.loc[train_df["Grade"].isna(), "Grade"] = preds
+        print(f"Filled {len(preds)} missing grades in {main_file}")
+    
+    # Save updated main file
+    train_df.to_excel(main_file, index=False)
 
-# Train MLP model
-print("Training model...")
-mlp = MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=500, random_state=42)
-mlp.fit(X_train, y_train)
+# === Step 2: Predict for other files ===
+for file in other_files:
+    df = pd.read_excel(file)
+    remark_col = find_remark_column(df)
+    if remark_col is None:
+        print(f"Skipping {file}: no remark-like column found.")
+        continue
 
-# Predict grades and round to integers
-print("Predicting grades...")
-X_all_scaled = scaler.transform(X)
-df['Predicted_Grade'] = np.rint(mlp.predict(X_all_scaled)).astype(int)
+    df = df.dropna(subset=[remark_col])
+    X = np.stack(df[remark_col].apply(model.encode))
+    X_scaled = scaler.transform(X)
 
-# Reload original Excel to preserve all formatting and columns
-df_output = pd.read_excel(file_path)
+    preds = np.rint(mlp.predict(X_scaled)).astype(int)
+    df["Grade"] = preds
 
-# Insert Predicted_Grade column after the Remarks column
-remarks_col_idx = df_output.columns.get_loc(remarks_column)
-df_output.insert(remarks_col_idx + 1, "Predicted_Grade", df['Predicted_Grade'])
+    df.to_excel(file, index=False)
+    print(f"Processed and updated: {file}")
 
-# Save the modified DataFrame to a new Excel file
-output_path = file_path.replace(".xlsx", "_with_grades.xlsx")
-df_output.to_excel(output_path, index=False)
-
-print(f"Graded file saved with Predicted_Grade beside Remarks at:\n{output_path}")
 
